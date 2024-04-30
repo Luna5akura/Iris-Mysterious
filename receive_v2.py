@@ -13,10 +13,11 @@ from threading import Lock
 
 import requests
 from flask import Flask, request, jsonify
-
+from flask_socketio import SocketIO, emit
 # region INIT
 app = Flask(__name__)
 
+socketio = SocketIO(app)
 inactivity_timer = None
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 atexit.register(logging.shutdown)
@@ -59,6 +60,7 @@ click_map = {
     "quest_to_ingredients": (890, 345),
     "quest_to_sidestory": (450, 340),
     "quest_start": (985, 660),
+    "quest_hard":(240,125),
     "ingredients_gem": (244, 122),
     "ingredients_gem_upgrade_easy": (85, 240),
     "battle_skip": (1090, 660),
@@ -78,6 +80,8 @@ screenshot_map = {
     "quest_sidestory_flarelight_disable": "./lib/flarelight_disable.png",
     "quest_new_level": "./lib/quest_new_level.png",
     "quest_unvisit_level": "./lib/quest_unvisit_level.png",
+    "quest_normal":"./lib/quest_normal.png",
+    "quest_hard":"./lib/quest_hard.png",
     "level_dialog_unskip": "./lib/level_dialog_unskip.png",
     "close": "./lib/close.png",
     "next": "./lib/next.png",
@@ -87,6 +91,17 @@ screenshot_map = {
 # endregion
 
 # region MAIN
+
+@socketio.on('request_debug_info')
+def handle_debug_info():
+    debug_info = {
+        'current_status': current_status,
+        "current_script":current_script,
+        'running': running,
+        'changed': changed,
+
+    }
+    emit('update_debug_info', debug_info)
 
 @app.route('/')
 def home():
@@ -105,7 +120,7 @@ def receive_data():
         match = pattern_response.search(data[:200])
         if match:
             with lock:
-                print("CHANGED TO TRUE")
+                print("LINE 123 CHANGED TO TRUE")
                 changed = True
                 success = un_responded.pop(messageID)
                 thread = Thread(target=analysis_response, args=(success['request'],))
@@ -115,7 +130,7 @@ def receive_data():
         match = pattern_request.search(data[:200])
         if match:
             with lock:
-                print("CHANGED TO TRUE")
+                print("LINE 133 CHANGED TO TRUE")
                 changed = True
                 un_responded[messageID] = {'request': match.group(0), 'timestamp': datetime.datetime.now()}
                 # print(f"\n{messageID} Request:", match.group(0)[:50])
@@ -136,13 +151,13 @@ def receive_data():
 @app.route('/send_data', methods=['POST'])
 def send_data():
     data = request.json
-    print("Received：", data)
+    print("LINE 153 Received：", data)
     response = {"message": "Received"}
     return jsonify(response)
 
 
 def analysis_response(success):
-    print(f"Analysing response {success}")
+    print(f"LINE 160 Analysing response {success}")
     global current_status
     global running
     if success:
@@ -150,11 +165,11 @@ def analysis_response(success):
             # print(f"Matching {pattern} with {success}")
             if pattern.search(success):
                 if not running:
-                    print("SCRIPT BEGINS RUNNING!!!!!")
+                    print("LINE 168 SCRIPT BEGINS RUNNING!!!!!")
                     running = True
                 else:
-                    print("ALREADY IN RUNNING!!!!")
-                print(f"{success} __matches__ {pattern},Set current state {name},Begin {current_script}")
+                    print("LINE 171 ALREADY IN RUNNING!!!!")
+                print(f"LINE 172 {success} __matches__ {pattern},Set current state {name},Begin {current_script}")
                 current_status = name
                 loaded(current_script)
                 return current_status
@@ -177,8 +192,8 @@ def reset_inactivity_timer():
     inactivity_timer.start()
 
 def timeout_function():
-    print("No activity for 5 seconds, executing get_screenshot_match.")
-    pathlist = screenshot_map.values()
+    print("LINE 195 No activity for 5 seconds, executing get_screenshot_match.")
+    pathlist = list(screenshot_map.values())
     get_screenshot_match(pathlist, called="timeout_check")
 
 # endregion
@@ -199,13 +214,14 @@ def log_function_call(func):
     return wrapper
 
 
-@log_function_call
+# @log_function_call
 def wait():
     pass
 
 
-@log_function_call
+# @log_function_call
 def loaded(func, *args, **kwargs):
+    socketio.emit('update_debug_info', {'line': '当前执行行号', 'variables': '变量状态'})
     # print("Waiting for loaded")
     global changed
     current_time = datetime.datetime.now()
@@ -227,37 +243,38 @@ def loaded(func, *args, **kwargs):
                 # print(f"executing:({func}()")
                 func()
         except Exception as e:
-            print(f"ERROR {e}")
+            print(f"LINE 246 ERROR {e}")
             exit(10)
     else:
         changed = False
-        print(f"Trying to execute {func},Still loading:{un_responded}")
+        print(f"LINE 250 Trying to execute {func},Still loading:{un_responded}")
         time.sleep(1)
         loaded(func, *args, **kwargs)
 
 
-@log_function_call
+# @log_function_call
 def sended(func, *args, max_retries=5, bad=None, bad_args=None, bad_kwargs=None, **kwargs):
+    socketio.emit('update_debug_info', {'line': '当前执行行号', 'variables': '变量状态'})
     global changed
     initial_responses = responses.copy()
     retry_count = 0
 
     while retry_count < max_retries:
-        print(f"Current script {current_script}")
+        print(f"LINE 263 Current script {current_script}")
         func(*args, **kwargs)
         # print(f"CHANGED SITUATION:{changed}")
         if initial_responses == responses and changed == False:
             time.sleep(1)
             retry_count += 1
-            print(f"Attempt {retry_count}: No change in un_responded, retrying...")
+            print(f"LINE 269 Attempt {retry_count}: No change in un_responded, retrying...")
         else:
             changed = False
             # print("Successfully executed")
             return
 
-    print("Max retries reached without changes in un_responded.")
+    print("LINE 275 Max retries reached without changes in un_responded.")
     if bad:
-        print(f"Calling {bad}")
+        print(f"LINE 277 Calling {bad}")
         if bad_args:
             bad(bad_args)
     return "No changes in un_responded after 5 attempts."
@@ -267,34 +284,37 @@ def sended(func, *args, max_retries=5, bad=None, bad_args=None, bad_kwargs=None,
 
 # region CONNECTION
 
-@log_function_call
+# @log_function_call
 def send_click(x, y, called=None):
+    socketio.emit('update_debug_info', {'line': '当前执行行号', 'variables': '变量状态'})
     # print(f"Sending click: {x}, {y} for function {called}")
     url = "http://127.0.0.1:1347/click"
     pos = {"x": x, "y": y}
     headers = {'Content-Type': 'application/json'}
     try:
         response = requests.post(url, json=pos, headers=headers, timeout=5)
-        print(f"Sended click: {x}, {y} for function {called}, {response}")
+        print(f"LINE 296 Sended click: {x}, {y} for function {called}, {response}")
     except requests.Timeout:
-        print(f"Timeout occurred when sending click: {x}, {y} for function {called}")
+        print(f"LINE 298 Timeout occurred when sending click: {x}, {y} for function {called}")
 
 
-@log_function_call
+# @log_function_call
 def get_screenshot_match(pathlist, called=None):
+    socketio.emit('update_debug_info', {'line': '当前执行行号', 'variables': '变量状态'})
     url = "http://127.0.0.1:1347/screenshot"
     headers = {'Content-Type': 'application/json'}
     try:
         response = requests.post(url, json=pathlist, headers=headers, timeout=5)
-        print(f"Sended get screenshot match:{response},{pathlist},CALLED = {called}")
+        print(f"LINE 308 Sended get screenshot match:{response},{pathlist},CALLED = {called}")
     except requests.Timeout:
-        print(f"Timeout occurred when getting screenshot match: {pathlist},CALLED = {called}")
+        print(f"LINE 310 Timeout occurred when getting screenshot match: {pathlist},CALLED = {called}")
 
 
 @app.route('/screenshot', methods=['POST'])
 def receive_screenshot_path():
+    socketio.emit('update_debug_info', {'line': '当前执行行号', 'variables': '变量状态'})
     data = request.json
-    print(f"Receive screenshot path {data}")
+    print(f"LINE 317 Receive screenshot path {data}")
     loaded(current_script, data)
     return jsonify({"status": "Receive screenshot"}), 200
 
@@ -304,7 +324,7 @@ def receive_screenshot_path():
 # region SCRIPTS
 
 def initialize(script=None, path=None):
-    print("INITIALIZING")
+    print("LINE 327 INITIALIZING")
     global current_script
     if current_status == "ini":
         time.sleep(1)
@@ -316,10 +336,11 @@ def initialize(script=None, path=None):
         sended(send_click, *click_map["enter"], called="enter", bad=initialize)
 
 
-@log_function_call
+# @log_function_call
 def auto_sidestory(path=None):
+    socketio.emit('update_debug_info', {'line': '当前执行行号', 'variables': '变量状态'})
     global running
-    print("AUTO_SIDESTORY")
+    print("LINE 343 AUTO_SIDESTORY")
     global current_script
     global current_status
     if not path:
@@ -345,6 +366,8 @@ def auto_sidestory(path=None):
         else:
             loaded(wait)
             sended(send_click, *click_map["home"], called="home")
+            running = False
+
             return
     else:
         # print("Received path")
@@ -374,24 +397,28 @@ def auto_sidestory(path=None):
         else:
             if current_script == auto_sidestory:
                 sended(send_click, *click_map["home"], called="home")
+                running = False
                 return
 
 
-@log_function_call
+# @log_function_call
 def auto_event(path=None, called=None):
+    socketio.emit('update_debug_info', {'line': '当前执行行号', 'variables': '变量状态'})
     # print(f"Auto event,called = {called}, path = {path}")
     global current_script
     global current_status
     current_script = auto_event
     if not path:
+        print("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n")
         pathlist = [screenshot_map["close"], screenshot_map["next"], screenshot_map["level_dialog_unskip"],
-                    screenshot_map["quest_new_level"], screenshot_map["quest_unvisit_level"]]
+                    screenshot_map["quest_new_level"], screenshot_map["quest_unvisit_level"],
+                    screenshot_map["quest_normal"]]
         loaded(wait)
         time.sleep(0.5)
         loaded(get_screenshot_match, pathlist, called=auto_event)
         return
     else:
-        if path == r"./lib/quest_new_level.png" or r"./lib/quest_unvisit_level.png":
+        if path == r"./lib/quest_new_level.png" or path == r"./lib/quest_unvisit_level.png":
             sended(send_click, *click_map["quest_start"], called=auto_event)
             current_script = auto_level
             auto_level(called=auto_event)
@@ -399,13 +426,28 @@ def auto_event(path=None, called=None):
         elif path in [screenshot_map["close"], screenshot_map["next"], screenshot_map["level_dialog_unskip"]]:
             auto_level(path=path, called=auto_event)
             return
+        elif path == screenshot_map["quest_normal"]:
+            sended(send_click, *click_map["quest_hard"], called=auto_event)
+            pathlist = [screenshot_map["close"], screenshot_map["next"], screenshot_map["level_dialog_unskip"],
+                        screenshot_map["quest_new_level"], screenshot_map["quest_unvisit_level"],
+                        screenshot_map["quest_normal"], screenshot_map["quest_hard"]]
+            loaded(get_screenshot_match, pathlist, called=auto_event)
+            return
+        else:
+            if current_script == auto_event:
+                sended(send_click, *click_map["home"], called="home")
+                current_script = auto_sidestory
+                running = False
+                return
 
 
 auto_event_called = ""
 
 
-@log_function_call
+# @log_function_call
 def auto_level(path=None, called=None):
+    socketio.emit('update_debug_info', {'line': '当前执行行号', 'variables': '变量状态'})
+    print("LINE 449 AHAHAHAHAHAHAHAHA")
     global auto_event_called
     global running
     if called:
@@ -415,7 +457,7 @@ def auto_level(path=None, called=None):
     global current_status
     current_script = auto_level
     if not path:
-        print(f"Current status : {current_status}")
+        print(f"LINE 459 Current status : {current_status}")
         if current_status == "quest" or current_status == "dialog":
             pathlist = [screenshot_map["level_dialog_unskip"], screenshot_map["quest_new_level"],
                         screenshot_map["quest_unvisit_level"]]
@@ -428,11 +470,8 @@ def auto_level(path=None, called=None):
                         screenshot_map["quest_new_level"], screenshot_map["quest_unvisit_level"]]
             loaded(get_screenshot_match, pathlist, called=auto_level)
             return
-        elif current_status == "battle_start":
-            time.sleep(1)
-            auto_level(called=auto_event_called)
-            return
         else:
+            time.sleep(5)
             auto_level(called=auto_event_called)
             return
     else:
@@ -470,4 +509,5 @@ def auto_level(path=None, called=None):
 
 if __name__ == '__main__':
     current_script = auto_sidestory
+    # socketio.run(app, debug=True, port=1346, allow_unsafe_werkzeug=True)
     app.run(debug=False, port=1346)
