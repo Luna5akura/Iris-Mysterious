@@ -38,7 +38,7 @@ changed = False
 responses = []
 un_responded = {}
 # endregion
-
+from idawasm.loader import
 # region MAP
 STATUS = {
     "ini": re.compile(r"/v1/events"),
